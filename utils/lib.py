@@ -2,7 +2,6 @@ import torch
 import mir_eval
 import numpy as np
 import museval
- 
 
 def ideal_mask_generator(target, mixture):
     a = torch.div(target,mixture)
@@ -14,9 +13,7 @@ def sdr_calc(target, mix, pred_spec, audioGen):
     # pred_spec: [B, n_src, n_channel, freq, frames, cmplx]
     # target [B, n_channel, freq, frames, cmplx]
     # mix [B, n_channel, freq, frames, cmplx]
-
-   
-    
+ 
     gt_audio = audioGen(target) # B, n_channel, time
     gt_audio = gt_audio.permute(0,2,1).detach().cpu().numpy() + 10e-5 # B, time, n_channel
     gt_audio = gt_audio[:,np.newaxis,...] # B, n_src, time, n_channel
@@ -33,15 +30,39 @@ def sdr_calc(target, mix, pred_spec, audioGen):
             # references= np.concatenate((gt, acco), axis=0),
             references= gt,
             estimates= pred[[0]],
-            
-            
         )
         sdr.append(sdr_.item())
         sir.append(sir_.item())
         sar.append(sar_.item())
     return sdr, sar, sir
 
+from utils.attention import GatedAttentionConv1DLayer, AttentionConv1DLayer, AttentionConv2DLayer
+from fast_transformers.attention.full_attention import FullAttention
 
+def get_attn_func(attn_name):
     
+    if attn_name == 'qkv2D': 
+        return AttentionConv2DLayer(
+            FullAttention(), 
+            d_model=512,
+            n_heads=16,
+            layer = 1,
+        )
+    elif attn_name == 'qkv1D': 
+        return AttentionConv1DLayer(
+            FullAttention(), 
+            d_model=512,
+            n_heads=16,
+            layer = 1,
+        )
+    elif attn_name == 'qkvg1D':
+        return GatedAttentionConv1DLayer(
+            FullAttention(), 
+            d_model=512,
+            n_heads=16,
+            layer = 1,
+        ),
+    else:
+        raise RuntimeError
     
     

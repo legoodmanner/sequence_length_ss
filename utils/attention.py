@@ -4,30 +4,10 @@ from torch.nn import functional as F
 from einops.layers.torch import Rearrange
 from fast_transformers.events import EventDispatcher, QKVEvent
 from torch.nn.modules.activation import ReLU
-
 from torch.nn.utils import weight_norm
+
 class AttentionConv2DLayer(Module):
-    """Implement the attention layer. Namely project the inputs to multi-head
-    queries, keys and values, call the attention implementation and then
-    reproject the output.
 
-    It can be thought of as a decorator (see decorator design patter) of an
-    attention layer.
-
-    Arguments
-    ---------
-        attention: Specific inner attention implementation that just computes a
-                   weighted average of values given a similarity of queries and
-                   keys.
-        d_model: The input feature dimensionality
-        n_heads: The number of heads for the multi head attention
-        d_keys: The dimensionality of the keys/queries
-                (default: d_model/n_heads)
-        d_values: The dimensionality of the values (default: d_model/n_heads)
-        event_dispatcher: str or EventDispatcher instance to be used by this
-                          module for dispatching events (default: the default
-                          global dispatcher)
-    """
     def __init__(self, attention, d_model, n_heads, d_keys=None,
                  d_values=None, kernel_size=5, in_channels=1, event_dispatcher=""):
         super(AttentionConv2DLayer, self).__init__()
@@ -41,7 +21,6 @@ class AttentionConv2DLayer(Module):
         self.query_projection = Sequential(
             Conv2d(in_channels=in_channels, out_channels=16, kernel_size=kernel_size, stride=1, padding=padding, bias=False),
             BatchNorm2d(16),
-            
             Rearrange('b c w h -> b w h c'),
             Linear(16, n_heads, bias=False),
             Rearrange('b w h a -> b w a h', a=n_heads),
@@ -49,7 +28,6 @@ class AttentionConv2DLayer(Module):
         self.key_projection = Sequential(
             Conv2d(in_channels=1, out_channels=16, kernel_size=kernel_size, stride=(2,1), padding=padding, bias=False),
             BatchNorm2d(16),
-
             Rearrange('b c w h -> b w h c'),
             Linear(16, n_heads, bias=False),
             Rearrange('b w h a -> b w a h', a=n_heads),
@@ -57,7 +35,6 @@ class AttentionConv2DLayer(Module):
         self.value_projection = Sequential(
             Conv2d(in_channels=1, out_channels=16, kernel_size=kernel_size, stride=(2,1), padding=padding, bias=False),
             BatchNorm2d(16),
-            
             Rearrange('b c w h -> b w h c'),
             Linear(16, n_heads, bias=False),
             Rearrange('b w h a -> b w a h', a=n_heads),
@@ -66,6 +43,7 @@ class AttentionConv2DLayer(Module):
         self.out_projection = Linear(d_values * n_heads, d_model, bias=False)
         self.n_heads = n_heads
         self.event_dispatcher = EventDispatcher.get(event_dispatcher)
+
     def forward(self, queries, keys, values, attn_mask, query_lengths,
                 key_lengths):
         """Apply attention to the passed in queries/keys/values after
@@ -124,11 +102,11 @@ class AttentionConv2DLayer(Module):
 
 
 
-class AttentionConv1D4Layer(Module):
+class AttentionConv1DLayer(Module):
     
     def __init__(self, attention, d_model, n_heads, d_keys=None,
                  d_values=None, kernel_size=7, dilation_exp=0, stride=1, event_dispatcher="",):
-        super(AttentionConv1D4Layer, self).__init__()
+        super(AttentionConv1DLayer, self).__init__()
 
         # Fill d_keys and d_values
         d_keys = d_keys or  (d_model//n_heads)
@@ -139,31 +117,16 @@ class AttentionConv1D4Layer(Module):
         padding = dilation * (kernel_size-1)//2
 
         self.query_projection = Sequential(
-            # Linear(d_model,d_model),
-            # LayerNorm(d_model),
             Rearrange('N L D -> N D L'),
             Conv1d(in_channels=d_model, out_channels= d_model*n_heads, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation, groups=1, bias=True),
-            # BatchNorm1d(d_model),
             Rearrange('N D L -> N L D'),
             Linear(d_model*n_heads, d_keys * n_heads),
-            
             )
 
         self.key_projection = Sequential(
-            # Linear(d_model,d_model),
-            # LayerNorm(d_model),
             Rearrange('N L D -> N D L'),
             Conv1d(in_channels=d_model, out_channels= d_model*n_heads, kernel_size=kernel_size, stride=4, padding=padding, dilation=dilation, groups=1, bias=True),
             # BatchNorm1d(d_model),
-            Rearrange('N D L -> N L D'),
-            Linear(d_model*n_heads, d_keys * n_heads),
-            
-            )
-        
-        self.mask_projection = Sequential(
-            Rearrange('N L D -> N D L'),
-            Conv1d(in_channels=d_model, out_channels= d_model*n_heads, kernel_size=kernel_size, stride=4, padding=padding, dilation=dilation, groups=1, bias=True),
-            Rearrange('N D L -> N L D'),
             Linear(d_model*n_heads, d_keys * n_heads),
             )
         
@@ -172,10 +135,7 @@ class AttentionConv1D4Layer(Module):
             Conv1d(in_channels=d_model, out_channels= d_model*n_heads, kernel_size=kernel_size, stride=stride, padding=(kernel_size-1)//2, dilation=1, groups=1, bias=True),
             Rearrange('N D L -> N L D'),
             Linear(d_model*n_heads, d_keys*n_heads),
-
             )
-       
-        # self.mask_out = Linear(d_keys, d_keys)
 
         self.out_projection = Linear(d_model * n_heads, d_model * n_heads, bias=True)
         self.head_projection = Sequential(
@@ -185,7 +145,8 @@ class AttentionConv1D4Layer(Module):
         )
         self.n_heads = n_heads
         self.event_dispatcher = EventDispatcher.get(event_dispatcher)
-    def forward(self, queries, keys, values, masks, source_indice, attn_mask, query_lengths,
+
+    def forward(self, queries, keys, values, source_indice, attn_mask, query_lengths,
                 key_lengths):
         """Apply attention to the passed in queries/keys/values after
         projecting them to multiple heads.
@@ -221,12 +182,8 @@ class AttentionConv1D4Layer(Module):
         H = self.n_heads
         # Project the queries/keys/values
 
-        # ind = source_indice.view(N, 1, 1) * D # (0,1,2,3) : (drum, bass, other, vocal)
-        # ind = torch.arange(D, device=queries.device) + ind.expand(-1,L,-1)
-
         queries = self.query_projection(queries).view(N, -1, H, D)
         keys = self.key_projection(keys).view(N, -1, H, D)
-        masks = self.mask_projection(masks).view(N, -1, H, D)
         values = self.value_projection(values).view(N, -1, H, D)
         # Let the world know of the qkv
         self.event_dispatcher.dispatch(QKVEvent(self, queries, keys, values))
@@ -234,19 +191,16 @@ class AttentionConv1D4Layer(Module):
         new_masks = self.inner_attention(
             queries,
             keys,
-            masks,
             attn_mask,
             query_lengths,
             key_lengths
-        )# .view(N, L, -1)
+        )
         # Project the output and return
         new_masks = self.head_projection(new_masks) + new_masks
-        # return self.out_projection(F.tanh(new_masks) * values.view(N, L, -1)).gather(-1, ind)
-        # return (F.tanh(new_masks).gather(-2, source_indice.view(N, 1, 1, 1).expand(-1,L,-1, D)).squeeze(-2) * values)
         return (F.tanh(new_masks) * values)
 
 
-class AttentionConv1DLayer(Module):
+class GatedAttentionConv1DLayer(Module):
     """Implement the attention layer. Namely project the inputs to multi-head
     queries, keys and values, call the attention implementation and then
     reproject the output.
@@ -270,7 +224,7 @@ class AttentionConv1DLayer(Module):
     """
     def __init__(self, attention, d_model, n_heads, d_keys=None,
                  d_values=None, kernel_size=3, dilation=1, stride=1, event_dispatcher="",):
-        super(AttentionConv1DLayer, self).__init__()
+        super(GatedAttentionConv1DLayer, self).__init__()
 
         # Fill d_keys and d_values
         d_keys = d_keys or  (d_model//n_heads)
@@ -282,36 +236,21 @@ class AttentionConv1DLayer(Module):
 
 
         self.query_projection = Sequential(
-            # Linear(d_model,d_model),
-            # LayerNorm(d_model),
             Rearrange('N L D -> N D L'),
-            # Conv1d(in_channels=d_model, out_channels= d_model, kernel_size=kernel_size, stride=1, padding=padding, dilation=1, groups=d_model, bias=True),
-            # Conv1d(in_channels=d_model, out_channels= d_model, kernel_size=1, stride=1, padding=0, dilation=1, groups=1, bias=True),
-            # SiLU(),
             Conv1d(in_channels=d_model, out_channels= d_model, kernel_size=kernel_size, stride=1, padding=0, dilation=1, groups=d_model, bias=True),
             Conv1d(in_channels=d_model, out_channels= d_values*n_heads, kernel_size=1, stride=1, padding=padding, dilation=1, bias=True),
             Rearrange('N D L -> N L D'),
-            
             )
         
-
         self.key_projection = Sequential(
-            # Linear(d_model,d_model),
-            # LayerNorm(d_model),
             Rearrange('N L D -> N D L'),
-            # *[Conv1d(in_channels=d_model, out_channels= d_model, kernel_size=kernel_size, stride=2, padding=padding, dilation=1, groups=d_model, bias=True),
-            # Conv1d(in_channels=d_model, out_channels= d_model, kernel_size=1, stride=1, padding=0, dilation=1, bias=True),
-            # ReLU()] * layer,
             Conv1d(in_channels=d_model, out_channels= d_model, kernel_size=kernel_size, stride=4, padding=0, dilation=1, groups=d_model, bias=True),
             Conv1d(in_channels=d_model, out_channels= d_values*n_heads, kernel_size=1, stride=1, padding=dilation*padding, dilation=dilation, bias=True),
             Rearrange('N D L -> N L D'),
             )
-        
-        self.mask_projection = Sequential(
+
+        self.gate_projection = Sequential(
             Rearrange('N L D -> N D L'),
-            # *[Conv1d(in_channels=d_model, out_channels= d_model, kernel_size=kernel_size, stride=2, padding=padding, dilation=1, groups=d_model, bias=True),
-            # Conv1d(in_channels=d_model, out_channels= d_model, kernel_size=1, stride=1, padding=0, dilation=1, bias=True),
-            # ReLU()]*layer,
             Conv1d(in_channels=d_model, out_channels= d_model, kernel_size=kernel_size, stride=4, padding=0, dilation=1, groups=d_model, bias=True),
             Conv1d(in_channels=d_model, out_channels= d_values*n_heads, kernel_size=1, stride=1, padding=dilation*padding, dilation=dilation, bias=True),
             Rearrange('N D L -> N L D'),
@@ -319,25 +258,16 @@ class AttentionConv1DLayer(Module):
         
         self.value_projection = Sequential(
             Rearrange('N L D -> N D L'),
-            # Conv1d(in_channels=d_model, out_channels= d_model, kernel_size=kernel_size, stride=1, padding=padding, dilation=1, groups=d_model, bias=True),
-            # Conv1d(in_channels=d_model, out_channels= d_model, kernel_size=1, stride=1, padding=0, dilation=1, bias=True),
-            # ReLU(),
             Conv1d(in_channels=d_model, out_channels= d_model, kernel_size=kernel_size, stride=1, padding=0, dilation=1, groups=d_model, bias=True),
             Conv1d(in_channels=d_model, out_channels= d_values*n_heads, kernel_size=1, stride=1, padding=dilation*padding, dilation=dilation, bias=True),
             Rearrange('N D L -> N L D'),
             )
        
-        # self.query_projection = Linear(d_model, d_keys * n_heads)
-        # self.key_projection = Linear(d_model, d_keys * n_heads)
-        # self.value_projection = Linear(d_model, d_values * n_heads)
-        # self.mask_projection = Linear(d_model, d_values * n_heads)
-
         self.out_projection = Linear(d_values*n_heads*2, d_model, bias=True)
-        # self.out_projection = Linear(d_values*n_heads, d_model, bias=True)
-        
         self.n_heads = n_heads
         self.event_dispatcher = EventDispatcher.get(event_dispatcher)
-    def forward(self, queries, keys, masks, values, pos_k, source_indice, attn_mask, query_lengths,
+    
+    def forward(self, queries, keys, gates, values, pos_k, source_indice, attn_mask, query_lengths,
                 key_lengths, softmax_temp):
         """Apply attention to the passed in queries/keys/values after
         projecting them to multiple heads.
@@ -373,10 +303,9 @@ class AttentionConv1DLayer(Module):
         H = self.n_heads
         # Project the queries/keys/values
 
-
         queries = self.query_projection(queries).view(N, -1, H, D//H)
         keys = self.key_projection(keys).view(N, -1, H, D//H)
-        masks = self.mask_projection(masks).view(N, -1, H, D//H)
+        gates = self.gate_projection(gates).view(N, -1, H, D//H)
         values = self.value_projection(values).view(N, -1, H, D//H)
         # Let the world know of the qkv
         self.event_dispatcher.dispatch(QKVEvent(self, queries, keys, values))
@@ -385,7 +314,7 @@ class AttentionConv1DLayer(Module):
         new_masks = self.inner_attention(
             queries,
             keys,
-            masks,
+            gates,
             attn_mask,
             query_lengths,
             key_lengths,
@@ -393,4 +322,3 @@ class AttentionConv1DLayer(Module):
         ).view(N, L, -1)
         # Project the output and return
         return self.out_projection(torch.cat([new_masks, values.view(N, L, -1)],dim=-1))
-        # return self.out_projection(new_masks)

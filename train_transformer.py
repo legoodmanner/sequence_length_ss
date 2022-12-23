@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torchaudio
 import torch.optim as optim
+import argparse
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 from einops import rearrange
@@ -13,49 +14,25 @@ from config import Open_Config as config
 from dataset.dataset import MUSDB18_vocal, MUSDB18_seg, MUSDB18_length
 from dataset.utils import *
 from utils.visualize import figGen, AudioGen, melGen
-from utils.lib import sdr_calc
+from utils.lib import sdr_calc, separator_builder
 from utils.criterion import KLD_Loss, SupConLoss, PITLoss
-from separator.transformer import TransformerEncoderContainer
-from separator.open_unmix_baseline import OpenUnmix, Separator
-from separator.umxtransformer import UmxTransformer
-from separator.open_unmix import Vanilla_Transformer
-from separator.query_unet import Query_UNet
-from separator.dense_unet import TFC_NET
+
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--cuda', help='determine the available GPU id')
+parser.add_argument('--separator', help='determine the type of the separator', choice=['umx', 'umx_transformer', 'auto_transformer'])
+parser.add_argument('--attention', help='determine the type of the attention', choice=['qkv2D', 'qkv1D', 'qkvg1D'])
+parser.add_argument('--bs', help='batch_size')
+parser.add_argument('--src', help='determine the source need to be separated', choice = ['drums', 'bass','other','vocals'])
+args = parser.parse_args()
 
 print('preparing the models...')
-device = torch.device(f'cuda:{config.cuda}')
-
-
-stft_extractor = STFT(config.cuda, **config.stft_params)
+device = torch.device(f'cuda:{args.cuda}')
+stft_extractor = STFT(args.cuda, **config.stft_params)
+instrument_indice = ['drums', 'bass','other','vocals'].index(args.src)
 complexnorm = ComplexNorm()
-# separator = Query_UNet()
-separator = TFC_NET(
-    n_fft=4096,
-    n_blocks=9, 
-    input_channels=4, 
-    internal_channels=16, 
-    n_internal_layers=3,
-    first_conv_activation='relu', 
-    last_activation='relu',
-    t_down_layers=None, 
-    f_down_layers=None,
-    kernel_size_t=3, 
-    kernel_size_f=3,
-    tfc_activation='relu',
-)
-# separator = Vanilla_Transformer()
-# separator = UmxTransformer()
-# separator = TransformerEncoderContainer()
-# separator = OpenUnmix(**config.unmix_kwargs)
+separator = separator_builder(args)
 
-""" unmix = OpenUnmix(**config.unmix_kwargs)
-checkpoint = torch.load('params/vocals-c8df74a5.pth', map_location=device)
-del checkpoint["sample_rate"]
-del checkpoint["stft.window"]
-del checkpoint[ "transform.0.window"] 
-unmix.load_state_dict(checkpoint) """ 
-
-separator = torch.nn.DataParallel(separator, config.parallel_cuda)
 if config.separator.load_model:
     """ model_dict = separator.state_dict()
     pretrained_dict = {k: v for k, v in torch.load(config.separator.load_model_path).items() if k in model_dict}
@@ -67,11 +44,9 @@ separator.to(device)
 
 train_dataset = MUSDB18_seg(subsets='train', split='train')
 valid_dataset = MUSDB18_seg(subsets='train', split='valid')
-train_loader = DataLoader(train_dataset, config.batch_size, num_workers=config.num_workers, shuffle=True, persistent_workers=False)
-eval_loader = DataLoader(valid_dataset, config.batch_size, num_workers=config.num_workers, shuffle=False, persistent_workers=False)
+train_loader = DataLoader(train_dataset, args.batch_size, num_workers=config.num_workers, shuffle=True, persistent_workers=False)
+eval_loader = DataLoader(valid_dataset, args.batch_size, num_workers=config.num_workers, shuffle=False, persistent_workers=False)
 
-instrument_indice= config.instrument_indice
-print(['drum', 'bass','other','vocal'][instrument_indice])
 
 # opt =============
 opt = optim.Adam(
@@ -81,12 +56,10 @@ opt = optim.Adam(
     weight_decay=config.weight_decay
     )
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(opt, mode='min', factor=0.3, patience=16, cooldown=10)
-
 # criterion ===============
 criterion = torch.nn.MSELoss()
 
 # utils =================
-writter = SummaryWriter(f'runs/{config.project}/{config.summary_name}')
 audioGen = AudioGen(config.istft_params)
 
 """ attentions = []
@@ -146,14 +119,8 @@ for epoch in range(0, config.n_epoch):
     
 
     print(f'{epoch} T| train loss: {train_loss}' )
-    writter.add_scalar('train_loss', train_loss, epoch)
-    
     
     if epoch % 5 == 0:
-
-       
-    
-
         # evaling =========================== 
         print('evaling...')
         separator.eval()
@@ -196,7 +163,6 @@ for epoch in range(0, config.n_epoch):
             print(f'{epoch} E| eval loss: {eval_loss}, SDR: {sdr.median()}' )
             writter.add_scalar('eval/SDR', sdr.median() , epoch) """
         
-        writter.add_scalar('eval_loss', eval_loss, epoch)
         """ writter.add_figure('eval_fig/pred_x', melGen(pred_v, config), epoch)
         writter.add_figure('eval_fig/gt_x', melGen(v_norm, config), epoch)
         writter.add_figure('eval_fig/mixture', melGen(m_norm, config), epoch) 

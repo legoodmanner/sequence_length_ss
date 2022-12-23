@@ -2,19 +2,13 @@ import torch
 from torchaudio_augmentations import *
 from dataset.utils import ToTensor
 CUDA = 0
-INST_INDICE = 3
-instruments = ['drums', 'bass','other','vocals']
-NAME = f'whateverfuckyou'
-print(NAME)
+
 ########
 class Open_Config:
-    cuda = CUDA
     project = 'length'
     n_epoch = 10000
-    parallel_cuda = [CUDA,2,3]
     
     #dataset/loader
-    batch_size = 3
     num_workers = 2
     split_ratio = 0.2
     
@@ -37,10 +31,6 @@ class Open_Config:
     hop_length = 1024
     wiener_win_len = 1000
     
-    instrument_indice = INST_INDICE
-    instruments = ['drum', 'bass','other','vocal']
-    summary_name = NAME
-    
 
     stft_params = {
         'n_fft': n_fft,
@@ -56,8 +46,7 @@ class Open_Config:
         'win_length': n_fft,
         'hop_length': hop_length, 
         'center': True,
-
-        'window': torch.hann_window(n_fft, requires_grad=False, device=cuda)
+        'window': torch.hann_window(n_fft, requires_grad=False, device=CUDA)
     }
 
     unmix_kwargs = {   
@@ -82,8 +71,8 @@ class Open_Config:
     }
     class separator:
         load_model = False
-        load_model_path = f'/home/lego/NAS189/home/MUSDB18/params/{NAME}'
-        save_model_path = f'/home/lego/NAS189/home/MUSDB18/params/{NAME}'
+        load_model_path = f'/home/lego/NAS189/home/MUSDB18/params/'
+        save_model_path = f'/home/lego/NAS189/home/MUSDB18/params/'
         latent_size = 128
     
     class query_encoder:
@@ -114,4 +103,38 @@ class Open_Config:
         latent_size = 128
 
 
+ 
+from separator.transformer_separator import VanillaTransformerSeparator, TransformerAutoEncoderSeparator
+from separator.umx_separator import OpenUnmix, UmxTransformerSeparator
 
+
+def separator_builder(args):
+    separator_book = {
+        'umx': OpenUnmix(
+            n_fft=2048,
+            nb_bins=4096,
+            nb_channels=2,
+            hidden_size=512,
+            nb_layers=3,
+            unidirectional=False,
+            input_mean=None,
+            input_scale=None,
+            max_bin=None),
+
+        'umx_transformer': UmxTransformerSeparator(
+            attention=args.attention,
+            n_fft=2048,
+            nb_bins=2049,
+            nb_channels=2,
+            hidden_size=512,
+            input_mean=None,
+            input_scale=None,
+            max_bin=None,
+        ), 
+        'auto_transformer': TransformerAutoEncoderSeparator(
+            attention=args.attention,
+            n_fft=2048,
+            hidden_size=512,
+        ) , 
+    }
+    return separator_book[args.separator]
