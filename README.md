@@ -33,7 +33,7 @@ We used MUSD18 [3] to train and test our source separation model and followed th
 The signal distortion ration (SDR) and signal-to-noise ratio (SNR) are calculated based on the `mireval` proposed in [4]
 
 ## Reference
-[1] F.-R. St\\"oter and S. Uhlich and A. Liutkus and Y. Mitsufuji, Open-Unmix - A Reference Implementation for Music Source Separation, 2019
-[2] A. Jansson and E. J. Humphrey and N Montecchio and R Bittner and A Kumar and T Weyde, Singing voice separation with deep U-Net convolutional networks, 2017
-[3] [MUSDB18](https://sigsep.github.io/datasets/musdb.html#musdb18-compressed-stems)
-[4] [museval](https://github.com/sigsep/sigsep-mus-eval)
+- [1] F.-R. St\\"oter and S. Uhlich and A. Liutkus and Y. Mitsufuji, Open-Unmix - A Reference Implementation for Music Source Separation, 2019
+- [2] A. Jansson and E. J. Humphrey and N Montecchio and R Bittner and A Kumar and T Weyde, Singing voice separation with deep U-Net convolutional networks, 2017
+- [3] [MUSDB18](https://sigsep.github.io/datasets/musdb.html#musdb18-compressed-stems)
+- [4] [museval](https://github.com/sigsep/sigsep-mus-eval)
