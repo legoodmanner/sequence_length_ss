@@ -4,3 +4,4 @@ python train_transformer.py \
     --attention qkv2D \
     --bs 8 \
     --src vocals \
+    --ckpt_dir ckpt/ \

@@ -1,54 +1,53 @@
 import numpy as np
 import torch
-import torchaudio
+import os
 import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import DataLoader
 
 from tqdm import tqdm
+import argparse
 from fast_transformers.events import EventDispatcher, AttentionEvent
 
 from config import Open_Config as config
 from dataset.dataset import MUSDB18_vocal_test
 from dataset.utils import *
 from utils.visualize import figGen, AudioGen, melGen, salGen
-from utils.lib import sdr_calc
-from utils.criterion import KLD_Loss, SupConLoss, PITLoss
-from separator.transformer import TransformerEncoderContainer
+from utils.lib import sdr_calc, separator_builder
 
-from separator.umxtransformer import UmxTransformer
-from separator.transformer import TransformerEncoderContainer
-from separator.open_unmix_baseline import OpenUnmix, Separator
-from separator.umxtransformer import UmxTransformer
-from separator.open_unmix import Vanilla_Transformer
-from separator.query_unet import Query_UNet
+parser = argparse.ArgumentParser()
+parser.add_argument('--cuda', help='determine the available GPU id')
+parser.add_argument('--separator', help='determine the type of the separator', choice=['umx', 'umx_transformer', 'auto_transformer'])
+parser.add_argument('--attention', help='determine the type of the attention', choice=['qkv2D', 'qkv1D', 'qkvg1D'])
+parser.add_argument('--bs', help='batch_size')
+parser.add_argument('--src', help='determine the source need to be separated', choice = ['drums', 'bass','other','vocals'])
+parser.add_argument('--ckpt_dir', help='determine the path of the directory for model checkpoints')
+args = parser.parse_args()
 
+# Model Initialization
 print('preparing the models...')
-device = torch.device(f'cuda:0')
-
-
-stft_extractor = STFT(0, **config.stft_params)
+device = torch.device(f'cuda:{args.cuda}')
+stft_extractor = STFT(args.cuda, **config.stft_params)
+instrument_indice = ['drums', 'bass','other','vocals'].index(args.src)
 complexnorm = ComplexNorm()
+separator = separator_builder(args)
+model_name = f'{args.separator}_{args.attention}_{args.src}'
+ckpt_path = os.path.join(args.ckpt_dir, model_name)+'.pkl'
 
-# separator
-separator = UmxTransformer()
-# separator = TransformerEncoderContainer()
-# separator = Vanilla_Transformer()
-# separator = OpenUnmix(**config.unmix_kwargs)
-# separator = Query_UNet()
+# Loading model
+if os.path.isfile(ckpt_path):
+    separator.load_state_dict(torch.load(ckpt_path))
+else:
+    print('The checkpoint file is not found!')
+    raise NameError
+
+# Parameter Counting
+print(f'paramers: {sum(p.numel() for p in separator.parameters())}')
+separator.to(device)
 length = 7 * 44100 // 1024
-# separator = torch.nn.DataParallel(separator, config.parallel_cuda)
-""" model_dict = separator.state_dict()
-pretrained_dict = {k: v for k, v in torch.load(f'{config.separator.load_model_path}_0.pkl').items() if k in model_dict}
-model_dict.update(pretrained_dict)  """
-separator.load_state_dict(torch.load(f'{config.separator.load_model_path}_0.pkl'))
-print(f'{config.separator.load_model_path}')
 print(f'length: {length}')
 
-separator.to(device)
 # dataset =======
-
-
 test_dataset = MUSDB18_vocal_test(subsets='test')
 eval_loader = DataLoader(test_dataset, 1, num_workers=config.num_workers, shuffle=False)
 
@@ -68,25 +67,21 @@ def save_attention_matrix(event):
     attentions.append(event.attention_matrix.detach().cpu().numpy())
 EventDispatcher.get().listen(AttentionEvent, save_attention_matrix)
 
-print('start training')
+print('start testing')
 
-    # Training +======================
+# Testing +======================
 
 separator.eval()
 stft_extractor.eval()
 eval_loss = 0
 for batch, wav in enumerate(tqdm(eval_loader)):
     with torch.no_grad():
-        # wav = move_data_to_device(wav, device)
-        # source_indice = torch.tensor([3]*wav.shape[0], device=wav.device)
         v_stft_, m_stft_ = stft_extractor(wav, instrument_indice)
         pred_stft_ = torch.zeros((1,1)+v_stft_.shape[1:]).float()
         nb_frames =  m_stft_.shape[-2]
         pos = 0
         while pos < nb_frames:
             cur_frame = torch.arange(pos, min(nb_frames, pos + length))
-            """ if pos + length > nb_frames:
-                break """
             m_stft = move_data_to_device(m_stft_[...,cur_frame,:], device)
             v_stft = move_data_to_device(v_stft_[...,cur_frame,:], device)
 
@@ -109,14 +104,10 @@ for batch, wav in enumerate(tqdm(eval_loader)):
             pred_stft = pred_stft.permute(0, 5, 3, 2, 1, 4).contiguous()
             pred_stft_[...,cur_frame,:] = pred_stft.detach().cpu()
             pos = int(cur_frame[-1]) + 1
-            # if pos + 300 < nb_frames:
-            
             np.save('att_train',np.array(attentions))
             attentions.clear()
         np.save('m_stft', m_stft.detach().cpu().numpy())
         
-        # writter.add_audio('test_audio/pred_x', audioGen(pred_stft_[0,0]), 1, config.rate)
-        # writter.add_audio('test_audio/gt', audioGen(v_stft_[0]), 1, config.rate)
         if batch == 0:
             sdr, sar, sir = torch.Tensor(sdr_calc(v_stft_, m_stft_, pred_stft_, audioGen))
         else:
@@ -136,12 +127,6 @@ print(f'sar {sar.median()}')
 
 
 
-        
-
-       
-""" print(f'{0} E| eval loss: {eval_loss}, SDR: {sdr.median()}' )
-writter.add_histogram('sdr_histogram',sdr,0)
-writter.add_scalar('eval/SDR', sdr.median() , 0) """
     
 
     
